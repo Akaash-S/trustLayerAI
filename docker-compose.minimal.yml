@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # Redis for session mapping and telemetry
+  redis:
+    image: redis:7-alpine
+    container_name: trustlayer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # TrustLayer AI Proxy (Minimal - No spaCy model download)
+  proxy:
+    build: 
+      context: .
+      dockerfile: Dockerfile.minimal
+    container_name: trustlayer-proxy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./app:/app/app
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Streamlit Dashboard
+  dashboard:
+    build: 
+      context: .
+      dockerfile: Dockerfile.minimal
+    container_name: trustlayer-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./dashboard.py:/app/dashboard.py
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: trustlayer-network

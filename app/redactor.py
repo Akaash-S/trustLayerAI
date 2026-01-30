@@ -4,6 +4,7 @@ TrustLayer AI: PII Redaction Engine using Microsoft Presidio
 import asyncio
 import json
 import logging
+import re
 from typing import Dict, List, Any, Tuple
 import redis
 from presidio_analyzer import AnalyzerEngine
@@ -11,6 +12,43 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
 
 logger = logging.getLogger(__name__)
+
+class BasicPIIDetector:
+    """
+    Fallback PII detector using regex patterns when spaCy models are not available
+    """
+    
+    def __init__(self):
+        # Basic regex patterns for common PII
+        self.patterns = {
+            'EMAIL_ADDRESS': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+            'PHONE_NUMBER': re.compile(r'(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})'),
+            'CREDIT_CARD': re.compile(r'\b(?:\d{4}[-\s]?){3}\d{4}\b'),
+            'US_SSN': re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),
+            'PERSON': re.compile(r'\b(?:Mr\.?|Mrs\.?|Ms\.?|Dr\.?|Prof\.?)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b|'
+                               r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b(?=\s+(?:said|told|reported|stated|mentioned))|'
+                               r'\bMy name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b'),
+        }
+    
+    def analyze(self, text: str, entities: List[str] = None, language: str = 'en') -> List[Dict]:
+        """Analyze text using basic regex patterns"""
+        results = []
+        
+        for entity_type, pattern in self.patterns.items():
+            if entities and entity_type not in entities:
+                continue
+                
+            for match in pattern.finditer(text):
+                # Create a simple result object that mimics Presidio's format
+                result = type('AnalyzerResult', (), {
+                    'entity_type': entity_type,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'score': 0.8
+                })()
+                results.append(result)
+        
+        return results
 
 class PII_Redactor:
     """
@@ -23,15 +61,18 @@ class PII_Redactor:
         
         # Initialize Presidio engines with fallback model support
         try:
-            # Try to use the large model first
+            # Try to use Presidio with spaCy models
             self.analyzer = AnalyzerEngine()
-            logger.info("Presidio analyzer initialized with default model")
+            self.use_presidio = True
+            logger.info("Presidio analyzer initialized successfully")
         except Exception as e:
-            logger.warning(f"Failed to initialize with default model: {e}")
-            # Fallback initialization if needed
-            self.analyzer = AnalyzerEngine()
+            logger.warning(f"Failed to initialize Presidio: {e}")
+            logger.info("Falling back to basic regex-based PII detection")
+            self.analyzer = BasicPIIDetector()
+            self.use_presidio = False
         
-        self.anonymizer = AnonymizerEngine()
+        if self.use_presidio:
+            self.anonymizer = AnonymizerEngine()
         
         # Initialize Redis connection
         redis_config = config["redis"]
