@@ -2,6 +2,7 @@
 """
 TrustLayer AI - Fix External Access
 Diagnoses and fixes external access issues for GCP Compute Engine
+Specifically handles cases where IP works inside GCP but not outside
 """
 
 import subprocess
@@ -53,10 +54,12 @@ def get_vm_info(vm_name="trustlayer-ai-main", zone="us-central1-a"):
             internal_ip = vm_info['networkInterfaces'][0]['networkIP']
             status = vm_info['status']
             tags = vm_info.get('tags', {}).get('items', [])
+            network = vm_info['networkInterfaces'][0]['network'].split('/')[-1]
             
             print(f"   ✅ VM Status: {status}")
             print(f"   ✅ External IP: {external_ip}")
             print(f"   ✅ Internal IP: {internal_ip}")
+            print(f"   ✅ Network: {network}")
             print(f"   ✅ Network Tags: {tags}")
             
             return {
@@ -65,7 +68,8 @@ def get_vm_info(vm_name="trustlayer-ai-main", zone="us-central1-a"):
                 'status': status,
                 'tags': tags,
                 'zone': zone,
-                'name': vm_name
+                'name': vm_name,
+                'network': network
             }
         except Exception as e:
             print(f"   ❌ Error parsing VM info: {e}")
@@ -73,49 +77,98 @@ def get_vm_info(vm_name="trustlayer-ai-main", zone="us-central1-a"):
     else:
         return None
 
-def check_firewall_rules():
-    """Check existing firewall rules"""
-    print(f"\n🔥 Checking firewall rules")
+def check_existing_firewall_rules(network="default"):
+    """Check all firewall rules that might affect external access"""
+    print(f"\n🔥 Checking firewall rules for network: {network}")
     
-    command = 'gcloud compute firewall-rules list --filter="name~trustlayer" --format="table(name,allowed,sourceRanges,targetTags)"'
-    success, output = run_command(command, "Listing TrustLayer firewall rules")
+    # Check all firewall rules for the network
+    command = f'gcloud compute firewall-rules list --filter="network~{network}" --format="table(name,allowed,sourceRanges,targetTags,direction)" --sort-by=name'
+    success, output = run_command(command, "Listing all firewall rules for network")
     
     if success:
-        if "trustlayer" in output:
-            print("   ✅ Found existing TrustLayer firewall rules:")
-            print(f"   {output}")
+        print("   Current firewall rules:")
+        print(f"   {output}")
+        
+        # Check specifically for rules that allow ports 8000 and 8501
+        command2 = f'gcloud compute firewall-rules list --filter="network~{network} AND allowed.ports:(8000 OR 8501)" --format="table(name,allowed,sourceRanges,targetTags)"'
+        success2, output2 = run_command(command2, "Checking rules for ports 8000/8501")
+        
+        if success2 and output2.strip():
+            print("   ✅ Found rules for TrustLayer ports:")
+            print(f"   {output2}")
             return True
         else:
-            print("   ⚠️  No TrustLayer firewall rules found")
+            print("   ❌ No rules found for ports 8000/8501")
             return False
+    
     return False
 
-def create_firewall_rules():
-    """Create necessary firewall rules"""
-    print(f"\n🔥 Creating firewall rules")
+def delete_conflicting_rules():
+    """Delete any conflicting firewall rules"""
+    print(f"\n🗑️  Checking for conflicting firewall rules")
     
-    # Rule 1: Allow external access to proxy and dashboard
-    command1 = '''gcloud compute firewall-rules create trustlayer-allow-external \
-    --allow tcp:8000,tcp:8501,tcp:80,tcp:443 \
+    # Check for any deny rules that might block our traffic
+    command = 'gcloud compute firewall-rules list --filter="action=DENY" --format="table(name,allowed,denied,sourceRanges,targetTags)"'
+    success, output = run_command(command, "Checking for DENY rules")
+    
+    if success and "DENY" in output:
+        print("   ⚠️  Found DENY rules that might conflict:")
+        print(f"   {output}")
+        print("   You may need to review these manually")
+    else:
+        print("   ✅ No conflicting DENY rules found")
+
+def create_comprehensive_firewall_rules(network="default"):
+    """Create comprehensive firewall rules for external access"""
+    print(f"\n🔥 Creating comprehensive firewall rules")
+    
+    # Delete existing TrustLayer rules first to avoid conflicts
+    print("   🗑️  Removing any existing TrustLayer rules...")
+    existing_rules = ["trustlayer-allow-external", "trustlayer-allow-web", "trustlayer-allow-proxy"]
+    
+    for rule in existing_rules:
+        command = f'gcloud compute firewall-rules delete {rule} --quiet'
+        run_command(command, f"Deleting existing rule: {rule}")
+    
+    # Rule 1: Allow external access to TrustLayer ports (MOST IMPORTANT)
+    command1 = f'''gcloud compute firewall-rules create trustlayer-allow-external \
+    --network {network} \
+    --action ALLOW \
+    --rules tcp:8000,tcp:8501,tcp:80,tcp:443 \
     --source-ranges 0.0.0.0/0 \
     --target-tags trustlayer-web \
-    --description "Allow external access to TrustLayer AI proxy and dashboard"'''
+    --description "Allow external access to TrustLayer AI from anywhere" \
+    --priority 1000'''
     
-    success1, _ = run_command(command1, "Creating external access rule")
+    success1, _ = run_command(command1, "Creating external access rule (HIGH PRIORITY)")
     
-    # Rule 2: Allow SSH
-    command2 = '''gcloud compute firewall-rules create trustlayer-allow-ssh \
-    --allow tcp:22 \
+    # Rule 2: Allow SSH access
+    command2 = f'''gcloud compute firewall-rules create trustlayer-allow-ssh \
+    --network {network} \
+    --action ALLOW \
+    --rules tcp:22 \
     --source-ranges 0.0.0.0/0 \
     --target-tags trustlayer-vm \
-    --description "Allow SSH access to TrustLayer AI VMs"'''
+    --description "Allow SSH access to TrustLayer VMs" \
+    --priority 1000'''
     
     success2, _ = run_command(command2, "Creating SSH access rule")
     
-    return success1 and success2
+    # Rule 3: Allow internal communication
+    command3 = f'''gcloud compute firewall-rules create trustlayer-allow-internal \
+    --network {network} \
+    --action ALLOW \
+    --rules tcp,udp,icmp \
+    --source-ranges 10.0.0.0/8 \
+    --description "Allow internal communication for TrustLayer" \
+    --priority 1000'''
+    
+    success3, _ = run_command(command3, "Creating internal communication rule")
+    
+    return success1 and success2 and success3
 
-def add_network_tags(vm_info):
-    """Add network tags to VM"""
+def add_network_tags_comprehensive(vm_info):
+    """Add network tags to VM with comprehensive approach"""
     print(f"\n🏷️  Adding network tags to VM")
     
     vm_name = vm_info['name']
@@ -123,7 +176,7 @@ def add_network_tags(vm_info):
     existing_tags = vm_info['tags']
     
     # Tags we need
-    required_tags = ['trustlayer-web', 'trustlayer-vm']
+    required_tags = ['trustlayer-web', 'trustlayer-vm', 'http-server', 'https-server']
     
     # Check if tags already exist
     missing_tags = [tag for tag in required_tags if tag not in existing_tags]
@@ -132,103 +185,113 @@ def add_network_tags(vm_info):
         print("   ✅ All required tags already present")
         return True
     
-    # Add missing tags
-    all_tags = existing_tags + missing_tags
+    # Add missing tags (keep existing ones)
+    all_tags = list(set(existing_tags + missing_tags))  # Remove duplicates
     tags_str = ','.join(all_tags)
     
-    command = f'gcloud compute instances add-tags {vm_name} --tags {tags_str} --zone {zone}'
-    success, _ = run_command(command, f"Adding tags: {missing_tags}")
+    command = f'gcloud compute instances set-tags {vm_name} --tags {tags_str} --zone {zone}'
+    success, _ = run_command(command, f"Setting tags: {all_tags}")
     
     return success
 
-def check_vm_services(vm_info):
-    """Check if services are running on VM"""
-    print(f"\n🐳 Checking services on VM")
+def verify_external_access_step_by_step(external_ip):
+    """Verify external access step by step"""
+    print(f"\n🧪 Verifying external access step by step")
     
-    external_ip = vm_info['external_ip']
+    # Step 1: Test from Google Cloud Shell (should work)
+    print("   📋 To test from Google Cloud Shell (should work):")
+    print(f"   gcloud cloud-shell ssh --command='curl -s http://{external_ip}:8000/health'")
     
-    # Try to SSH and check services
-    commands = [
-        "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'",
-        "sudo netstat -tlnp | grep ':8000\\|:8501'",
-        "curl -s http://localhost:8000/health || echo 'Health check failed'",
-        "curl -s -I http://localhost:8501 || echo 'Dashboard check failed'"
-    ]
-    
-    print(f"   📋 To check services manually, SSH into your VM:")
-    print(f"   ssh {external_ip}")
-    print(f"   Then run these commands:")
-    for cmd in commands:
-        print(f"   {cmd}")
-    
-    return True
-
-def test_connectivity_after_fix(external_ip):
-    """Test connectivity after applying fixes"""
-    print(f"\n🧪 Testing connectivity after fixes")
-    
+    # Step 2: Test basic TCP connectivity
+    print(f"\n   🔌 Testing TCP connectivity to {external_ip}:8000...")
     import socket
-    import requests
-    
-    # Wait a moment for rules to propagate
-    print("   ⏳ Waiting 30 seconds for firewall rules to propagate...")
-    time.sleep(30)
-    
-    # Test TCP connection
     try:
-        sock = socket.create_connection((external_ip, 8000), timeout=10)
+        sock = socket.create_connection((external_ip, 8000), timeout=15)
         sock.close()
-        print("   ✅ TCP connection to port 8000 successful")
+        print("   ✅ TCP connection successful")
         
-        # Test health endpoint
+        # Step 3: Test HTTP
+        print(f"   🌐 Testing HTTP connectivity...")
+        import requests
         try:
-            response = requests.get(f"http://{external_ip}:8000/health", timeout=10)
+            response = requests.get(f"http://{external_ip}:8000/health", timeout=15)
             if response.status_code == 200:
-                print("   ✅ Health endpoint accessible")
+                print("   ✅ HTTP connection successful")
+                print(f"   ✅ Response: {response.json()}")
                 return True
             else:
-                print(f"   ⚠️  Health endpoint returned HTTP {response.status_code}")
+                print(f"   ⚠️  HTTP returned status {response.status_code}")
         except Exception as e:
-            print(f"   ⚠️  Health endpoint error: {e}")
+            print(f"   ❌ HTTP error: {e}")
             
     except Exception as e:
-        print(f"   ❌ TCP connection still failing: {e}")
-        return False
+        print(f"   ❌ TCP connection failed: {e}")
+        print("   This confirms the firewall is still blocking external access")
     
     return False
 
-def print_next_steps(vm_info):
-    """Print next steps for user"""
+def check_network_connectivity_issues():
+    """Check for common network connectivity issues"""
+    print(f"\n🌐 Checking for network connectivity issues")
+    
+    # Check if we're behind a corporate firewall
+    print("   🏢 Checking if you're behind a corporate firewall...")
+    try:
+        import requests
+        response = requests.get("http://httpbin.org/ip", timeout=10)
+        if response.status_code == 200:
+            your_ip = response.json().get('origin', 'unknown')
+            print(f"   ✅ Your public IP: {your_ip}")
+            
+            # Check if it's a corporate/restricted IP range
+            if any(your_ip.startswith(prefix) for prefix in ['10.', '172.', '192.168.']):
+                print("   ⚠️  You appear to be behind a NAT/corporate firewall")
+                print("   This might be blocking outbound connections to GCP")
+            else:
+                print("   ✅ You have a public IP address")
+        else:
+            print("   ⚠️  Could not determine your public IP")
+    except Exception as e:
+        print(f"   ❌ Network connectivity test failed: {e}")
+
+def provide_alternative_solutions(vm_info):
+    """Provide alternative solutions if direct access doesn't work"""
     external_ip = vm_info['external_ip']
     
-    print(f"\n📋 NEXT STEPS:")
+    print(f"\n🔧 ALTERNATIVE SOLUTIONS:")
     print("=" * 60)
-    print("1. Wait 2-3 minutes for firewall rules to fully propagate")
-    print("2. SSH into your VM to check services:")
-    print(f"   ssh {external_ip}")
-    print("3. Check if Docker containers are running:")
-    print("   docker ps")
-    print("4. Check if services are listening on all interfaces:")
-    print("   sudo netstat -tlnp | grep ':8000\\|:8501'")
-    print("5. Test health endpoint locally on VM:")
-    print("   curl http://localhost:8000/health")
-    print("6. If services aren't running, start them:")
-    print("   cd /opt/trustlayer-ai")
-    print("   docker-compose up -d")
-    print("7. Test external access again:")
-    print(f"   python test_external_ip.py {external_ip}")
     
-    print(f"\n🔧 If external access still doesn't work:")
-    print("1. Use SSH tunnel as temporary solution:")
+    print("1. 🚇 SSH Tunnel (Immediate solution):")
     print(f"   ssh -L 8000:localhost:8000 -L 8501:localhost:8501 {external_ip}")
     print("   Then use proxy: 127.0.0.1:8000")
-    print("2. Check if your local network/ISP blocks the ports")
-    print("3. Consider using the load balancer approach from the deployment guide")
+    print("   Dashboard: http://localhost:8501")
+    
+    print("\n2. 🌐 Use Google Cloud Shell:")
+    print("   - Go to Google Cloud Console")
+    print("   - Click the Cloud Shell icon (>_)")
+    print(f"   - Run: curl http://{external_ip}:8000/health")
+    print("   - This should work from inside GCP")
+    
+    print("\n3. ⚖️  Set up Load Balancer (Recommended for production):")
+    print("   - Follow the GCP deployment guide")
+    print("   - Create a load balancer with external IP")
+    print("   - Use load balancer IP instead of VM IP")
+    
+    print("\n4. 🔒 VPN Solution:")
+    print("   - Set up Cloud VPN or use a VPN service")
+    print("   - Connect through VPN to access GCP resources")
+    
+    print("\n5. 🌍 Test from different network:")
+    print("   - Try from mobile hotspot")
+    print("   - Try from different location/ISP")
+    print("   - This helps identify if it's your network blocking GCP")
 
 def main():
     """Main function"""
-    print("🚀 TrustLayer AI - Fix External Access")
-    print("=" * 60)
+    print("🚀 TrustLayer AI - Fix External Access (GCP Firewall Issue)")
+    print("=" * 70)
+    print("🎯 Specifically fixing: IP works inside GCP but not outside")
+    print("=" * 70)
     
     # Get VM name and zone from command line or use defaults
     vm_name = sys.argv[1] if len(sys.argv) > 1 else "trustlayer-ai-main"
@@ -250,38 +313,61 @@ def main():
         print(f"   gcloud compute instances start {vm_name} --zone {zone}")
         sys.exit(1)
     
-    # Check existing firewall rules
-    has_firewall = check_firewall_rules()
+    external_ip = vm_info['external_ip']
+    network = vm_info['network']
     
-    # Create firewall rules if needed
-    if not has_firewall:
-        print("🔧 Creating missing firewall rules...")
-        if not create_firewall_rules():
-            print("❌ Failed to create firewall rules")
-            sys.exit(1)
-    else:
-        print("✅ Firewall rules already exist")
+    print(f"\n🎯 Target: {external_ip} (VM: {vm_name}, Network: {network})")
+    
+    # Check existing firewall rules
+    has_proper_rules = check_existing_firewall_rules(network)
+    
+    # Check for conflicting rules
+    delete_conflicting_rules()
+    
+    # Create comprehensive firewall rules
+    print("\n🔧 Creating comprehensive firewall rules...")
+    if not create_comprehensive_firewall_rules(network):
+        print("❌ Failed to create firewall rules")
+        sys.exit(1)
     
     # Add network tags to VM
-    if not add_network_tags(vm_info):
+    if not add_network_tags_comprehensive(vm_info):
         print("❌ Failed to add network tags")
         sys.exit(1)
     
-    # Check VM services
-    check_vm_services(vm_info)
+    # Wait for rules to propagate
+    print("\n⏳ Waiting 60 seconds for firewall rules to propagate...")
+    time.sleep(60)
     
-    # Test connectivity
-    external_ip = vm_info['external_ip']
-    if test_connectivity_after_fix(external_ip):
+    # Verify external access
+    if verify_external_access_step_by_step(external_ip):
         print("\n🎉 SUCCESS! External access is now working!")
         print(f"\n🔧 Use this proxy configuration:")
         print(f"   HTTP Proxy:  {external_ip}:8000")
         print(f"   HTTPS Proxy: {external_ip}:8000")
         print(f"   Dashboard:   http://{external_ip}:8501")
+        
+        # Test with the original test script
+        print(f"\n🧪 Run this to verify:")
+        print(f"   python test_external_ip.py {external_ip}")
+        
     else:
-        print("\n⚠️  Firewall rules created but connectivity still not working")
-        print("   This usually means services aren't running on the VM")
-        print_next_steps(vm_info)
+        print("\n⚠️  External access still not working after firewall fixes")
+        print("   This suggests the issue might be:")
+        print("   1. Your local network/ISP blocking GCP IPs")
+        print("   2. Corporate firewall blocking outbound connections")
+        print("   3. Services not running properly on the VM")
+        
+        # Check network connectivity issues
+        check_network_connectivity_issues()
+        
+        # Provide alternative solutions
+        provide_alternative_solutions(vm_info)
+        
+        print(f"\n📋 Next steps:")
+        print(f"   1. Try SSH tunnel: ssh -L 8000:localhost:8000 {external_ip}")
+        print(f"   2. Test from Google Cloud Shell")
+        print(f"   3. Check VM services: python check_vm_services.py {external_ip}")
 
 if __name__ == "__main__":
     main()
