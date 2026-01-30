@@ -1,0 +1,58 @@
+# TrustLayer AI - Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trustlayer-ai
+  labels:
+    name: trustlayer-ai
+    project: trustlayer-ai
+    environment: prod
+    managed-by: kubernetes
+---
+# Resource quota for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: trustlayer-quota
+  namespace: trustlayer-ai
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "10"
+    services: "5"
+    persistentvolumeclaims: "2"
+---
+# Network policy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trustlayer-network-policy
+  namespace: trustlayer-ai
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: trustlayer-ai
+    - podSelector: {}
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: trustlayer-ai
+    - podSelector: {}
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53

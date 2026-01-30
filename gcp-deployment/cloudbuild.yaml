@@ -1,0 +1,278 @@
+# TrustLayer AI - Cloud Build Configuration
+# Automated build and deployment pipeline
+
+steps:
+  # Step 1: Build the main application container
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-proxy'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+    dir: '.'
+
+  # Step 2: Build the dashboard container
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-dashboard'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:latest'
+      - '-f'
+      - 'gcp-deployment/Dockerfile.dashboard'
+      - '.'
+    dir: '.'
+
+  # Step 3: Run security scan on proxy container
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'security-scan-proxy'
+    args:
+      - 'container'
+      - 'images'
+      - 'scan'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID'
+      - '--format=json'
+    waitFor: ['build-proxy']
+
+  # Step 4: Run security scan on dashboard container
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'security-scan-dashboard'
+    args:
+      - 'container'
+      - 'images'
+      - 'scan'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID'
+      - '--format=json'
+    waitFor: ['build-dashboard']
+
+  # Step 5: Push proxy container to registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-proxy'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID'
+    waitFor: ['security-scan-proxy']
+
+  # Step 6: Push dashboard container to registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-dashboard'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID'
+    waitFor: ['security-scan-dashboard']
+
+  # Step 7: Push latest tags
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-proxy-latest'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai:latest'
+    waitFor: ['push-proxy']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-dashboard-latest'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:latest'
+    waitFor: ['push-dashboard']
+
+  # Step 8: Deploy to Cloud Run (proxy service)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy-proxy'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'trustlayer-ai-proxy'
+      - '--image=gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID'
+      - '--region=$_REGION'
+      - '--platform=managed'
+      - '--ingress=internal-and-cloud-load-balancing'
+      - '--vpc-connector=$_VPC_CONNECTOR'
+      - '--vpc-egress=all-traffic'
+      - '--service-account=$_SERVICE_ACCOUNT'
+      - '--memory=4Gi'
+      - '--cpu=2'
+      - '--min-instances=1'
+      - '--max-instances=10'
+      - '--port=8000'
+      - '--set-env-vars=PROJECT_ID=$PROJECT_ID,REGION=$_REGION,ENVIRONMENT=$_ENVIRONMENT'
+      - '--no-allow-unauthenticated'
+    waitFor: ['push-proxy-latest']
+
+  # Step 9: Deploy to Cloud Run (dashboard service)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy-dashboard'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'trustlayer-ai-dashboard'
+      - '--image=gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID'
+      - '--region=$_REGION'
+      - '--platform=managed'
+      - '--ingress=internal-and-cloud-load-balancing'
+      - '--vpc-connector=$_VPC_CONNECTOR'
+      - '--vpc-egress=all-traffic'
+      - '--service-account=$_SERVICE_ACCOUNT'
+      - '--memory=2Gi'
+      - '--cpu=1'
+      - '--min-instances=1'
+      - '--max-instances=3'
+      - '--port=8501'
+      - '--set-env-vars=PROJECT_ID=$PROJECT_ID,PYTHONPATH=/app'
+      - '--no-allow-unauthenticated'
+    waitFor: ['push-dashboard-latest']
+
+  # Step 10: Update load balancer backend services
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'update-backends'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Wait for services to be ready
+        sleep 30
+        
+        # Update backend services to point to new revisions
+        gcloud compute backend-services update trustlayer-$_ENVIRONMENT-proxy-backend \
+          --region=$_REGION \
+          --global-health-checks
+        
+        gcloud compute backend-services update trustlayer-$_ENVIRONMENT-dashboard-backend \
+          --region=$_REGION \
+          --global-health-checks
+    waitFor: ['deploy-proxy', 'deploy-dashboard']
+
+  # Step 11: Run health checks
+  - name: 'gcr.io/cloud-builders/curl'
+    id: 'health-check'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Wait for deployment to stabilize
+        sleep 60
+        
+        # Test proxy health endpoint
+        echo "Testing proxy health endpoint..."
+        curl -f -H "Host: api.$_DOMAIN_NAME" http://$_LOAD_BALANCER_IP/health || exit 1
+        
+        # Test metrics endpoint
+        echo "Testing metrics endpoint..."
+        curl -f -H "Host: api.$_DOMAIN_NAME" http://$_LOAD_BALANCER_IP/metrics || exit 1
+        
+        echo "Health checks passed!"
+    waitFor: ['update-backends']
+
+  # Step 12: Run integration tests
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'integration-tests'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Create a test VM for internal testing
+        gcloud compute instances create trustlayer-test-vm \
+          --zone=$_ZONE \
+          --machine-type=e2-micro \
+          --subnet=trustlayer-$_ENVIRONMENT-connector-subnet \
+          --no-address \
+          --image-family=debian-11 \
+          --image-project=debian-cloud \
+          --scopes=cloud-platform \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y curl
+            
+            # Test internal DNS resolution
+            nslookup api.$_DOMAIN_NAME
+            
+            # Test API endpoint
+            curl -f http://api.$_DOMAIN_NAME/health
+            
+            # Test dashboard endpoint
+            curl -f http://dashboard.$_DOMAIN_NAME
+            
+            echo "Integration tests completed successfully"
+          '
+        
+        # Wait for tests to complete
+        sleep 120
+        
+        # Clean up test VM
+        gcloud compute instances delete trustlayer-test-vm --zone=$_ZONE --quiet
+    waitFor: ['health-check']
+
+  # Step 13: Binary Authorization attestation
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'binary-auth'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Create attestation for the built images
+        gcloud container binauthz attestations sign-and-create \
+          --artifact-url=gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID \
+          --attestor=trustlayer-$_ENVIRONMENT-attestor \
+          --keyversion-project=$PROJECT_ID \
+          --keyversion-location=$_REGION \
+          --keyversion-keyring=trustlayer-$_ENVIRONMENT-keyring \
+          --keyversion-key=trustlayer-$_ENVIRONMENT-crypto-key \
+          --keyversion=1
+        
+        gcloud container binauthz attestations sign-and-create \
+          --artifact-url=gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID \
+          --attestor=trustlayer-$_ENVIRONMENT-attestor \
+          --keyversion-project=$PROJECT_ID \
+          --keyversion-location=$_REGION \
+          --keyversion-keyring=trustlayer-$_ENVIRONMENT-keyring \
+          --keyversion-key=trustlayer-$_ENVIRONMENT-crypto-key \
+          --keyversion=1
+    waitFor: ['integration-tests']
+
+# Substitution variables
+substitutions:
+  _REGION: 'us-central1'
+  _ZONE: 'us-central1-a'
+  _ENVIRONMENT: 'prod'
+  _DOMAIN_NAME: 'trustlayer.internal'
+  _VPC_CONNECTOR: 'trustlayer-prod-connector'
+  _SERVICE_ACCOUNT: 'trustlayer-prod-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+  _LOAD_BALANCER_IP: '10.0.1.100'
+
+# Build options
+options:
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: '100'
+  logging: 'CLOUD_LOGGING_ONLY'
+  
+# Build timeout
+timeout: '3600s'
+
+# Images to be pushed to Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/trustlayer-ai:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/trustlayer-ai:latest'
+  - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:latest'
+
+# Artifacts
+artifacts:
+  objects:
+    location: 'gs://$PROJECT_ID-build-artifacts'
+    paths:
+      - 'gcp-deployment/terraform/*.tf'
+      - 'config.yaml'
+      - 'requirements.txt'
+
+# Notifications
+availableSecrets:
+  secretManager:
+    - versionName: 'projects/$PROJECT_ID/secrets/build-notifications/versions/latest'
+      env: 'SLACK_WEBHOOK_URL'

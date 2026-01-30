@@ -1,0 +1,148 @@
+# TrustLayer AI - RBAC Configuration
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trustlayer-sa
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: rbac
+  annotations:
+    iam.gke.io/gcp-service-account: trustlayer-prod-sa@PROJECT_ID.iam.gserviceaccount.com
+---
+# Role for TrustLayer AI operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trustlayer-role
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+---
+# RoleBinding for TrustLayer AI service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trustlayer-rolebinding
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: trustlayer-sa
+  namespace: trustlayer-ai
+roleRef:
+  kind: Role
+  name: trustlayer-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole for monitoring and metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: trustlayer-monitoring-role
+  labels:
+    app: trustlayer-ai
+    component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/metrics", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+---
+# ClusterRoleBinding for monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: trustlayer-monitoring-rolebinding
+  labels:
+    app: trustlayer-ai
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: trustlayer-sa
+  namespace: trustlayer-ai
+roleRef:
+  kind: ClusterRole
+  name: trustlayer-monitoring-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Pod Security Policy (if enabled)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: trustlayer-psp
+  labels:
+    app: trustlayer-ai
+    component: rbac
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  volumes:
+  - 'configMap'
+  - 'emptyDir'
+  - 'projected'
+  - 'secret'
+  - 'downwardAPI'
+  - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+---
+# Role for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trustlayer-psp-role
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: rbac
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - trustlayer-psp
+---
+# RoleBinding for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trustlayer-psp-rolebinding
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: trustlayer-sa
+  namespace: trustlayer-ai
+roleRef:
+  kind: Role
+  name: trustlayer-psp-role
+  apiGroup: rbac.authorization.k8s.io

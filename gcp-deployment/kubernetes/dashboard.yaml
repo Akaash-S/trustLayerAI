@@ -1,0 +1,97 @@
+# TrustLayer AI - Dashboard Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trustlayer-dashboard
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trustlayer-ai
+      component: dashboard
+  template:
+    metadata:
+      labels:
+        app: trustlayer-ai
+        component: dashboard
+    spec:
+      serviceAccountName: trustlayer-sa
+      containers:
+      - name: dashboard
+        image: gcr.io/PROJECT_ID/trustlayer-ai-dashboard:latest
+        ports:
+        - containerPort: 8501
+          name: http
+        env:
+        - name: PROXY_URL
+          value: "http://proxy-service"
+        - name: PYTHONPATH
+          value: "/app"
+        envFrom:
+        - configMapRef:
+            name: trustlayer-env-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        livenessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config-volume
+        configMap:
+          name: trustlayer-config
+      securityContext:
+        fsGroup: 1000
+---
+# Dashboard Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: trustlayer-ai
+  labels:
+    app: trustlayer-ai
+    component: dashboard
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  selector:
+    app: trustlayer-ai
+    component: dashboard
+  ports:
+  - port: 80
+    targetPort: 8501
+    name: http
+  type: ClusterIP

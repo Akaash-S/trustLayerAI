@@ -73,46 +73,115 @@ A production-ready Google Cloud Platform deployment using Private Service Connec
 
 ```
 gcp-deployment/
-├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── vpc.tf
-│   ├── cloud-run.tf
-│   ├── load-balancer.tf
-│   ├── dns.tf
-│   ├── memorystore.tf
-│   └── security.tf
-├── cloudbuild.yaml
-├── Dockerfile.gcp
-└── deploy.sh
+├── terraform/                 # Infrastructure as Code
+│   ├── main.tf               # Main Terraform configuration
+│   ├── variables.tf          # Input variables
+│   ├── outputs.tf            # Output values
+│   ├── vpc.tf                # VPC and networking
+│   ├── cloud-run.tf          # Cloud Run services
+│   ├── load-balancer.tf      # Internal load balancer
+│   ├── dns.tf                # Private DNS configuration
+│   ├── memorystore.tf        # Redis configuration
+│   ├── security.tf           # Security policies and IAM
+│   └── monitoring.tf         # Monitoring and alerting
+├── kubernetes/               # Kubernetes manifests (GKE option)
+│   ├── namespace.yaml        # Namespace and resource quotas
+│   ├── rbac.yaml             # Service accounts and RBAC
+│   ├── configmap.yaml        # Configuration management
+│   ├── redis.yaml            # Redis deployment
+│   ├── proxy.yaml            # Proxy service deployment
+│   ├── dashboard.yaml        # Dashboard deployment
+│   └── ingress.yaml          # Internal ingress controller
+├── cloudbuild.yaml           # Cloud Build CI/CD pipeline
+├── Dockerfile.dashboard      # Dashboard container image
+└── deploy.sh                 # Automated deployment script
 ```
 
 ## 🚀 Quick Deployment
+
+### Option 1: Automated Deployment Script (Recommended)
 
 ```bash
 # 1. Clone and setup
 git clone <your-repo>
 cd trustlayer-ai
 
-# 2. Set GCP project
+# 2. Set your GCP project ID
+export PROJECT_ID="your-project-id"
+
+# 3. Run automated deployment
+chmod +x gcp-deployment/deploy.sh
+./gcp-deployment/deploy.sh -p $PROJECT_ID -n your-email@company.com
+
+# 4. Test deployment
+curl -H "Host: api.trustlayer.internal" http://LOAD_BALANCER_IP/health
+```
+
+### Option 2: Manual Step-by-Step Deployment
+
+```bash
+# 1. Set environment variables
 export PROJECT_ID="your-project-id"
 export REGION="us-central1"
+export ZONE="us-central1-a"
 
-# 3. Enable required APIs
-gcloud services enable run.googleapis.com compute.googleapis.com dns.googleapis.com vpcaccess.googleapis.com redis.googleapis.com
+# 2. Enable required APIs
+gcloud services enable run.googleapis.com compute.googleapis.com \
+  dns.googleapis.com vpcaccess.googleapis.com redis.googleapis.com \
+  cloudbuild.googleapis.com containerregistry.googleapis.com
 
-# 4. Deploy infrastructure
+# 3. Build and push containers
+docker build -t gcr.io/$PROJECT_ID/trustlayer-ai:latest .
+docker build -t gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:latest -f gcp-deployment/Dockerfile.dashboard .
+gcloud auth configure-docker
+docker push gcr.io/$PROJECT_ID/trustlayer-ai:latest
+docker push gcr.io/$PROJECT_ID/trustlayer-ai-dashboard:latest
+
+# 4. Deploy infrastructure with Terraform
 cd gcp-deployment/terraform
 terraform init
-terraform plan -var="project_id=${PROJECT_ID}" -var="region=${REGION}"
-terraform apply
+terraform plan -var="project_id=$PROJECT_ID" -var="region=$REGION"
+terraform apply -var="project_id=$PROJECT_ID" -var="region=$REGION"
 
-# 5. Build and deploy container
-gcloud builds submit --config=../cloudbuild.yaml ../..
+# 5. Deploy with Cloud Build (optional)
+cd ../..
+gcloud builds submit --config=gcp-deployment/cloudbuild.yaml
 
 # 6. Test deployment
-curl -H "Host: api.trustlayer.internal" http://10.1.0.100/health
+LOAD_BALANCER_IP=$(cd gcp-deployment/terraform && terraform output -raw load_balancer_ip)
+curl -H "Host: api.trustlayer.internal" http://$LOAD_BALANCER_IP/health
+```
+
+### Option 3: Kubernetes Deployment (GKE)
+
+```bash
+# 1. Create GKE cluster
+gcloud container clusters create trustlayer-cluster \
+  --region=$REGION \
+  --enable-private-nodes \
+  --master-ipv4-cidr-block=172.16.0.0/28 \
+  --enable-ip-alias \
+  --enable-workload-identity \
+  --enable-autorepair \
+  --enable-autoupgrade
+
+# 2. Get cluster credentials
+gcloud container clusters get-credentials trustlayer-cluster --region=$REGION
+
+# 3. Deploy Kubernetes manifests
+kubectl apply -f gcp-deployment/kubernetes/namespace.yaml
+kubectl apply -f gcp-deployment/kubernetes/rbac.yaml
+kubectl apply -f gcp-deployment/kubernetes/configmap.yaml
+kubectl apply -f gcp-deployment/kubernetes/redis.yaml
+kubectl apply -f gcp-deployment/kubernetes/proxy.yaml
+kubectl apply -f gcp-deployment/kubernetes/dashboard.yaml
+kubectl apply -f gcp-deployment/kubernetes/ingress.yaml
+
+# 4. Wait for deployment
+kubectl wait --for=condition=available --timeout=300s deployment/trustlayer-proxy -n trustlayer-ai
+
+# 5. Get ingress IP
+kubectl get ingress trustlayer-ingress -n trustlayer-ai
 ```
 
 ## 🏗️ Infrastructure Components
