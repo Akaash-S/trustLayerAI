@@ -23,10 +23,6 @@ RUN python -m spacy download en_core_web_sm || \
     pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl || \
     echo "Warning: spaCy model installation failed, will use basic PII detection"
 
-# Copy entrypoint script first
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
 # Copy application code
 COPY . .
 
@@ -37,8 +33,5 @@ USER trustlayer
 # Expose ports
 EXPOSE 8000 8501
 
-# Use entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-# Default command
+# Default command (will be overridden by docker-compose)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
