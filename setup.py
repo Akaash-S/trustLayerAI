@@ -13,7 +13,24 @@ def install_requirements():
 def download_spacy_model():
     """Download spaCy NLP model"""
     print("Downloading spaCy English model...")
-    subprocess.check_call([sys.executable, "-m", "spacy", "download", "en_core_web_lg"])
+    try:
+        # Try the standard download first
+        subprocess.check_call([sys.executable, "-m", "spacy", "download", "en_core_web_lg"])
+    except subprocess.CalledProcessError:
+        print("Standard download failed, trying alternative method...")
+        try:
+            # Alternative: Install via pip
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl"])
+        except subprocess.CalledProcessError:
+            print("Alternative download also failed, trying smaller model...")
+            try:
+                # Fallback to smaller model
+                subprocess.check_call([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
+                print("⚠️  Using smaller model 'en_core_web_sm' - PII detection may be less accurate")
+            except subprocess.CalledProcessError:
+                print("❌ All spaCy model downloads failed. You'll need to install manually.")
+                print("💡 Try: pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl")
+                raise
 
 def setup_directories():
     """Create necessary directories"""

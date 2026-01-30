@@ -56,18 +56,79 @@ A Production-Ready AI Governance Transparent Proxy that intercepts all outbound 
 - Seamless user experience
 - Complete security invisibility
 
-## Quick Start
+## 🧪 Local Testing & Validation
 
+### Quick Start Testing
+
+1. **Automated Setup:**
+   ```bash
+   # Run complete setup
+   python setup_simple.py
+   ```
+
+2. **Start Services:**
+   ```bash
+   # Windows
+   start_local.bat
+   # OR PowerShell
+   start_local.ps1
+   ```
+
+3. **Run Validation:**
+   ```bash
+   # Activate environment
+   venv\Scripts\activate
+   
+   # Complete system validation
+   python validate_setup.py
+   ```
+
+### Manual Testing Steps
+
+**Terminal 1 - Proxy:**
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start services
-docker-compose up -d
-
-# Access dashboard
-http://localhost:8501
+venv\Scripts\activate
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+**Terminal 2 - Dashboard:**
+```bash
+venv\Scripts\activate
+streamlit run dashboard.py
+```
+
+**Terminal 3 - Tests:**
+```bash
+venv\Scripts\activate
+
+# Basic connectivity tests
+python test_basic.py
+
+# PII redaction tests
+python test_pii.py
+
+# File upload tests
+python test_file_upload.py
+
+# Complete validation
+python validate_setup.py
+```
+
+### Expected Results
+
+✅ **Proxy Health:** `http://localhost:8000/health` returns `{"status":"healthy"}`  
+✅ **Dashboard:** `http://localhost:8501` shows real-time metrics  
+✅ **PII Blocking:** Names/emails replaced with `[CONFIDENTIAL_PERSON_1]`  
+✅ **Security:** Prompt injection blocked (400 status)  
+✅ **Compliance:** 95%+ score in dashboard  
+
+### Troubleshooting
+
+If issues occur, check:
+- `TROUBLESHOOTING.md` - Comprehensive issue resolution
+- Proxy logs for PII redaction messages
+- Redis container status: `docker ps`
+- Port availability: `netstat -ano | findstr :8000`
 
 ## AWS VPC Deployment
 

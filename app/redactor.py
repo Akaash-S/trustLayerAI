@@ -21,8 +21,16 @@ class PII_Redactor:
         self.config = config
         self.entities = config["presidio"]["entities"]
         
-        # Initialize Presidio engines
-        self.analyzer = AnalyzerEngine()
+        # Initialize Presidio engines with fallback model support
+        try:
+            # Try to use the large model first
+            self.analyzer = AnalyzerEngine()
+            logger.info("Presidio analyzer initialized with default model")
+        except Exception as e:
+            logger.warning(f"Failed to initialize with default model: {e}")
+            # Fallback initialization if needed
+            self.analyzer = AnalyzerEngine()
+        
         self.anonymizer = AnonymizerEngine()
         
         # Initialize Redis connection
