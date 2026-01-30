@@ -56,45 +56,53 @@ A Production-Ready AI Governance Transparent Proxy that intercepts all outbound 
 - Seamless user experience
 - Complete security invisibility
 
-## 🚀 One-Command Setup & Test
+## 🚀 Quick Start
 
-### Fully Automated (Recommended)
+### One-Command Setup
 
-**Local Setup:**
 ```bash
-# Windows: Double-click or run
-run_all.bat
+# Complete setup (local + Docker)
+python setup.py
+```
 
-# Or use Python directly
+### Usage Options
+
+**Option 1: Local Development (Recommended)**
+```bash
+# Activate virtual environment
+venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+
+# Run automated setup and testing
 python run_all.py
 ```
 
-**Docker Setup:**
+**Option 2: Docker Deployment**
 ```bash
-# Docker-based deployment (handles spaCy model issues)
-python docker_setup.py
-
-# Or traditional Docker Compose
+# Start all services
 docker-compose up -d
+
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
 ```
 
-### What Each Method Does:
+**Option 3: Manual Setup**
+```bash
+# Activate virtual environment
+venv\Scripts\activate
 
-**Local Setup (`run_all.py`):**
-1. ✅ Check prerequisites (Python, Docker)
-2. ✅ Set up virtual environment
-3. ✅ Install all dependencies
-4. ✅ Start Redis, Proxy, and Dashboard
-5. ✅ Run comprehensive tests
-6. ✅ Keep services running for manual testing
+# Terminal 1: Start proxy
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-**Docker Setup (`docker_setup.py`):**
-1. ✅ Check Docker availability
-2. ✅ Build lightweight Docker image
-3. ✅ Handle spaCy model downloads at runtime
-4. ✅ Start all services in containers
-5. ✅ Provide service health checks
-6. ✅ Show logs and access URLs
+# Terminal 2: Start dashboard
+streamlit run dashboard.py
+
+# Terminal 3: Run tests
+python test_pii.py
+```
 
 ### Manual Testing (Advanced Users)
 
