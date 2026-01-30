@@ -3,35 +3,39 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (minimal for production)
 RUN apt-get update && apt-get install -y \
     curl \
-    gcc \
-    g++ \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy requirements first for better caching
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy model during build with proper error handling
-RUN python -m spacy download en_core_web_sm || \
-    pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl || \
+# Pre-install spaCy model during build (production-ready)
+# Using direct download URL for reliability
+RUN python -c "import spacy; spacy.cli.download('en_core_web_sm')" || \
+    pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl || \
     echo "Warning: spaCy model installation failed, will use basic PII detection"
 
 # Copy application code
-COPY . .
+COPY app/ ./app/
+COPY config.yaml ./
+COPY dashboard.py ./
 
-# Create non-root user
-RUN useradd -m -u 1000 trustlayer && chown -R trustlayer:trustlayer /app
+# Create non-root user for security
+RUN useradd -m -u 1000 trustlayer && \
+    chown -R trustlayer:trustlayer /app
 USER trustlayer
 
-# Expose ports
-EXPOSE 8000 8501
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command (will be overridden by docker-compose)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Expose port
+EXPOSE 8000
+
+# Production command using Gunicorn (not uvicorn)
+CMD ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--worker-class", "uvicorn.workers.UvicornWorker", "--workers", "1", "--timeout", "120", "--keep-alive", "2"]

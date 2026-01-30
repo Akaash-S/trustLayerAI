@@ -22,13 +22,19 @@ from .telemetry import TelemetryCollector
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load configuration
+# Load configuration with environment variable support
 config_path = "config.yaml"
 if not os.path.exists(config_path):
     config_path = "config.local.yaml"
 
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
+
+# Override Redis configuration with environment variables if available
+if os.getenv("REDIS_HOST"):
+    config["redis"]["host"] = os.getenv("REDIS_HOST")
+if os.getenv("REDIS_PORT"):
+    config["redis"]["port"] = int(os.getenv("REDIS_PORT"))
 
 app = FastAPI(title="TrustLayer AI Proxy", version="1.0.0")
 
@@ -281,11 +287,23 @@ async def proxy_request(request: Request, path: str, background_tasks: Backgroun
                     params=request.query_params
                 )
             else:
+                # Prepare content for forwarding
+                if redacted_content:
+                    # Use redacted content
+                    content_to_send = redacted_content.encode('utf-8')
+                    # Update Content-Length header to match actual content
+                    headers['content-length'] = str(len(content_to_send))
+                else:
+                    # Use original body content
+                    content_to_send = await request.body()
+                    # Remove content-length header to let httpx calculate it
+                    headers.pop('content-length', None)
+                
                 response = await client.request(
                     method=request.method,
                     url=target_url,
                     headers=headers,
-                    content=redacted_content.encode() if redacted_content else await request.body(),
+                    content=content_to_send,
                     params=request.query_params
                 )
             

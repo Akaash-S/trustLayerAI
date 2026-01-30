@@ -11,7 +11,7 @@ allowed_domains:
   - "127.0.0.1:8000"
 
 redis:
-  host: "localhost"  # Use localhost since Redis runs separately
+  host: "10.97.237.131"  # GCP Redis primary endpoint
   port: 6379
   db: 0
   session_ttl: 3600  # 1 hour
