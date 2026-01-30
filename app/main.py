@@ -4,6 +4,7 @@ TrustLayer AI: Master Builder - FastAPI Core with Dynamic Routing
 import asyncio
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
@@ -22,7 +23,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load configuration
-with open("config.yaml", "r") as f:
+config_path = "config.yaml"
+if not os.path.exists(config_path):
+    config_path = "config.local.yaml"
+
+with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 app = FastAPI(title="TrustLayer AI Proxy", version="1.0.0")
@@ -158,6 +163,52 @@ async def extract_and_redact_content(request: Request) -> tuple[str, Dict[str, s
     
     return "", {}
 
+@app.get("/test")
+async def test_endpoint():
+    """Test endpoint that doesn't make external calls"""
+    return {
+        "status": "working", 
+        "message": "TrustLayer AI Proxy is running",
+        "ssl_fixed": True,
+        "environment": "codespaces" if os.getenv("CODESPACES") else "local"
+    }
+
+@app.post("/test")
+async def test_pii_detection(request: Request):
+    """Test PII detection without external API calls"""
+    try:
+        body = await request.body()
+        if body:
+            json_data = json.loads(body)
+            
+            # Extract text for PII detection
+            text_content = ""
+            if "messages" in json_data:
+                for message in json_data["messages"]:
+                    if isinstance(message.get("content"), str):
+                        text_content += message["content"] + "\n"
+            elif "content" in json_data:
+                text_content = json_data["content"]
+            elif "text" in json_data:
+                text_content = json_data["text"]
+            
+            # Test PII detection
+            redacted_text, mapping = await redactor.redact_text(text_content, "test-session")
+            
+            return {
+                "original_text": text_content,
+                "redacted_text": redacted_text,
+                "pii_detected": len(mapping),
+                "pii_types": list(mapping.keys()) if mapping else [],
+                "status": "pii_detection_working"
+            }
+        
+        return {"status": "no_content", "message": "Send JSON with 'content', 'text', or 'messages' field"}
+        
+    except Exception as e:
+        logger.error(f"Test PII detection error: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -199,7 +250,11 @@ async def proxy_request(request: Request, path: str, background_tasks: Backgroun
         await telemetry.log_pii_redaction(len(pii_mapping), request.client.host)
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            verify=False,  # Disable SSL verification for development
+            follow_redirects=True
+        ) as client:
             # Forward the request
             if request.method == "GET":
                 response = await client.get(

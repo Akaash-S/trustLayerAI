@@ -1,0 +1,21 @@
+{
+  "name": "TrustLayer AI Development",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/gcloud:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.flake8",
+        "ms-toolsai.jupyter",
+        "ms-vscode.vscode-json"
+      ]
+    }
+  },
+  "forwardPorts": [8000, 8501, 6379],
+  "postCreateCommand": "pip install -r requirements.txt",
+  "remoteUser": "vscode"
+}
