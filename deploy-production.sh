@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-PROJECT_ID=${PROJECT_ID:-"your-gcp-project-id"}
+PROJECT_ID=${PROJECT_ID:-"trustlayer-ai-suite"}
 REGION=${REGION:-"us-central1"}
 SERVICE_NAME="trustlayer-ai-proxy"
 
