@@ -18,7 +18,7 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    command: gunicorn app.main:app --bind 0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 120
+    command: gunicorn app.main:app --bind 0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 120 --reload
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

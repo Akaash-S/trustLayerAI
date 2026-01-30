@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # TrustLayer AI Proxy
+  proxy:
+    image: trustlayer-ai:latest
+    container_name: trustlayer-proxy
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=10.97.237.131
+      - REDIS_PORT=6379
+    restart: unless-stopped
+    command: gunicorn app.main:app --bind 0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker --workers 2 --timeout 120 --keep-alive 2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Streamlit Dashboard
+  dashboard:
+    image: trustlayer-ai:latest
+    container_name: trustlayer-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=10.97.237.131
+      - REDIS_PORT=6379
+    depends_on:
+      proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
