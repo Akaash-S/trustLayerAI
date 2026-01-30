@@ -1,24 +1,6 @@
 version: '3.8'
 
 services:
-  # Redis for session mapping and telemetry
-  redis:
-    image: redis:7-alpine
-    container_name: trustlayer-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - trustlayer-network
-
   # TrustLayer AI Proxy
   proxy:
     build: .
@@ -30,18 +12,14 @@ services:
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-    depends_on:
-      redis:
-        condition: service_healthy
     restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 90s
-    networks:
-      - trustlayer-network
 
   # Streamlit Dashboard
   dashboard:
@@ -56,17 +34,19 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
     depends_on:
-      proxy:
-        condition: service_healthy
+      - proxy
     restart: unless-stopped
     command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
-    networks:
-      - trustlayer-network
 
-volumes:
-  redis_data:
-    driver: local
-
-networks:
-  trustlayer-network:
-    driver: bridge
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: trustlayer-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - proxy
+      - dashboard
+    restart: unless-stopped
