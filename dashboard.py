@@ -10,10 +10,23 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
 import yaml
+import os
 
 # Load configuration
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
+
+# Detect if running in Docker and set proxy URL accordingly
+def get_proxy_url():
+    """Get the correct proxy URL based on environment"""
+    if os.getenv('PYTHONPATH') == '/app' or os.path.exists('/.dockerenv'):
+        # Running in Docker - use service name
+        return f"http://proxy:{config['proxy']['port']}"
+    else:
+        # Running locally - use localhost
+        return f"http://localhost:{config['proxy']['port']}"
+
+PROXY_URL = get_proxy_url()
 
 # Page configuration
 st.set_page_config(
@@ -50,14 +63,14 @@ st.markdown("""
 def get_metrics():
     """Fetch metrics from the proxy API"""
     try:
-        response = requests.get(f"http://localhost:{config['proxy']['port']}/metrics", timeout=10)
+        response = requests.get(f"{PROXY_URL}/metrics", timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
             st.error(f"Failed to fetch metrics: HTTP {response.status_code}")
             return None
     except requests.exceptions.ConnectionError:
-        st.error("Unable to connect to TrustLayer AI Proxy. Please ensure the service is running on http://localhost:8000")
+        st.error(f"Unable to connect to TrustLayer AI Proxy. Please ensure the service is running on {PROXY_URL}")
         return None
     except requests.exceptions.Timeout:
         st.error("Connection to TrustLayer AI Proxy timed out. Please check if the service is responding.")
@@ -88,7 +101,7 @@ def main():
 def test_proxy_connection():
     """Test connection to the proxy"""
     try:
-        response = requests.get(f"http://localhost:{config['proxy']['port']}/health", timeout=5)
+        response = requests.get(f"{PROXY_URL}/health", timeout=5)
         if response.status_code == 200:
             return True, "Connected"
         else:
@@ -109,7 +122,7 @@ def render_dashboard():
     if not connected:
         st.error(f"❌ Cannot connect to TrustLayer AI Proxy: {status}")
         st.info("🔧 Troubleshooting:")
-        st.code("""
+        st.code(f"""
 # Make sure the proxy is running:
 python run_all.py
 
@@ -117,16 +130,18 @@ python run_all.py
 venv\\Scripts\\activate  # Windows
 source venv/bin/activate  # Linux/Mac
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Current proxy URL: {PROXY_URL}
         """)
         
-        # Show retry button
-        if st.button("🔄 Retry Connection"):
-            st.experimental_rerun()
+        # Show retry button with unique key
+        if st.button("🔄 Retry Connection", key="retry_connection_main"):
+            st.rerun()
         
         return
     
     # Show connection status
-    st.success(f"✅ Connected to TrustLayer AI Proxy")
+    st.success(f"✅ Connected to TrustLayer AI Proxy ({PROXY_URL})")
     
     # Fetch current metrics
     metrics = get_metrics()
