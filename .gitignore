@@ -207,3 +207,6 @@ sample_data/
 # Backup files
 *.bak
 *.backup
+# Test files (temporary)
+test_dashboard_docker_fix.py
+test_docker_detection.py

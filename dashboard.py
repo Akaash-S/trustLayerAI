@@ -19,7 +19,31 @@ with open("config.yaml", "r") as f:
 # Detect if running in Docker and set proxy URL accordingly
 def get_proxy_url():
     """Get the correct proxy URL based on environment"""
-    if os.getenv('PYTHONPATH') == '/app' or os.path.exists('/.dockerenv'):
+    # Check specific Docker environment indicators
+    docker_indicators = [
+        # Most reliable: PYTHONPATH set to /app (our Docker setup)
+        os.getenv('PYTHONPATH') == '/app',
+        # Docker creates this file
+        os.path.exists('/.dockerenv'),
+        # Our specific container hostname pattern
+        os.getenv('HOSTNAME', '').startswith('trustlayer-dashboard'),
+        # Container name environment variable
+        os.getenv('CONTAINER_NAME') is not None,
+        # Check if we're running as PID 1 (common in containers)
+        os.getpid() == 1
+    ]
+    
+    # Check cgroup for container indicators (Linux only)
+    try:
+        with open('/proc/1/cgroup', 'r') as f:
+            cgroup_content = f.read()
+            if 'docker' in cgroup_content or 'containerd' in cgroup_content:
+                docker_indicators.append(True)
+    except (FileNotFoundError, PermissionError):
+        # Not Linux or no access - skip this check
+        pass
+    
+    if any(docker_indicators):
         # Running in Docker - use service name
         return f"http://proxy:{config['proxy']['port']}"
     else:
@@ -134,8 +158,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # Current proxy URL: {PROXY_URL}
         """)
         
-        # Show retry button with unique key
-        if st.button("🔄 Retry Connection", key="retry_connection_main"):
+        # Show retry button with unique key based on timestamp and random component
+        import random
+        retry_key = f"retry_connection_{int(time.time())}_{random.randint(1000, 9999)}"
+        if st.button("🔄 Retry Connection", key=retry_key):
             st.rerun()
         
         return
