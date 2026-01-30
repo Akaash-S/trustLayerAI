@@ -19,7 +19,9 @@ services:
 
   # TrustLayer AI Proxy
   proxy:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: trustlayer-proxy
     ports:
       - "8000:8000"
@@ -28,6 +30,7 @@ services:
       - ./app:/app/app
     environment:
       - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
     depends_on:
       redis:
         condition: service_healthy
@@ -37,11 +40,22 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      start_period: 60s
+    command: >
+      sh -c "
+        echo 'Checking spaCy model...' &&
+        python -c 'import spacy; spacy.load(\"en_core_web_lg\")' 2>/dev/null ||
+        python -c 'import spacy; spacy.load(\"en_core_web_sm\")' 2>/dev/null ||
+        python -m spacy download en_core_web_sm &&
+        echo 'Starting TrustLayer AI Proxy...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
 
   # Streamlit Dashboard
   dashboard:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: trustlayer-dashboard
     ports:
       - "8501:8501"
@@ -50,11 +64,16 @@ services:
       - ./dashboard.py:/app/dashboard.py
     environment:
       - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
     depends_on:
       proxy:
         condition: service_healthy
     restart: unless-stopped
-    command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501
+    command: >
+      sh -c "
+        echo 'Starting TrustLayer AI Dashboard...' &&
+        streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+      "
 
 volumes:
   redis_data:

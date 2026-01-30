@@ -43,7 +43,38 @@ class PII_Redactor:
         )
         self.session_ttl = redis_config["session_ttl"]
         
+        # Test spaCy model availability
+        self._test_spacy_model()
+        
         logger.info("PII Redactor initialized with Presidio and Redis")
+    
+    def _test_spacy_model(self):
+        """Test which spaCy model is available and log the result"""
+        try:
+            import spacy
+            # Try to load the large model first
+            try:
+                nlp = spacy.load("en_core_web_lg")
+                logger.info("Using spaCy large model (en_core_web_lg) for high accuracy NLP")
+                return
+            except OSError:
+                pass
+            
+            # Fall back to small model
+            try:
+                nlp = spacy.load("en_core_web_sm")
+                logger.info("Using spaCy small model (en_core_web_sm) - accuracy may be reduced")
+                return
+            except OSError:
+                pass
+            
+            # If no model is available, log warning
+            logger.warning("No spaCy model available - PII detection accuracy will be significantly reduced")
+            logger.warning("Please install a spaCy model: python -m spacy download en_core_web_sm")
+            
+        except Exception as e:
+            logger.error(f"Error testing spaCy model: {e}")
+            logger.warning("PII detection may not work properly")
     
     def _generate_placeholder(self, entity_type: str, entity_value: str, session_id: str) -> str:
         """Generate a unique placeholder for the detected entity"""

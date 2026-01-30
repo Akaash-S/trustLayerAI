@@ -60,6 +60,7 @@ A Production-Ready AI Governance Transparent Proxy that intercepts all outbound 
 
 ### Fully Automated (Recommended)
 
+**Local Setup:**
 ```bash
 # Windows: Double-click or run
 run_all.bat
@@ -68,13 +69,32 @@ run_all.bat
 python run_all.py
 ```
 
-This single command will:
+**Docker Setup:**
+```bash
+# Docker-based deployment (handles spaCy model issues)
+python docker_setup.py
+
+# Or traditional Docker Compose
+docker-compose up -d
+```
+
+### What Each Method Does:
+
+**Local Setup (`run_all.py`):**
 1. ✅ Check prerequisites (Python, Docker)
 2. ✅ Set up virtual environment
 3. ✅ Install all dependencies
 4. ✅ Start Redis, Proxy, and Dashboard
 5. ✅ Run comprehensive tests
 6. ✅ Keep services running for manual testing
+
+**Docker Setup (`docker_setup.py`):**
+1. ✅ Check Docker availability
+2. ✅ Build lightweight Docker image
+3. ✅ Handle spaCy model downloads at runtime
+4. ✅ Start all services in containers
+5. ✅ Provide service health checks
+6. ✅ Show logs and access URLs
 
 ### Manual Testing (Advanced Users)
 

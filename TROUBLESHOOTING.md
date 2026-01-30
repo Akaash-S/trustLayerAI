@@ -107,22 +107,55 @@ docker ps
 ```
 OSError: [E050] Can't find model 'en_core_web_lg'
 HTTP Error 404: Not Found (when downloading model)
+ERROR: failed to build: process "/bin/sh -c python -m spacy download en_core_web_lg" did not complete successfully
 ```
 
 **Solutions:**
 ```bash
-# Try direct download
+# For local setup - try direct download
 python -m spacy download en_core_web_lg
 
 # If network issues, download manually
 pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
 
-# Verify model installation
-python -c "import spacy; nlp = spacy.load('en_core_web_lg'); print('Model loaded successfully')"
-
-# Alternative: use smaller model for testing
+# Use smaller model for testing
 python -m spacy download en_core_web_sm
 # Then update config.yaml to use en_core_web_sm
+
+# For Docker builds - use the lightweight setup
+python docker_setup.py
+
+# Or build without model (downloads at runtime)
+docker build -f Dockerfile.light -t trustlayer-ai .
+
+# Verify model installation
+python -c "import spacy; nlp = spacy.load('en_core_web_lg'); print('Model loaded successfully')"
+```
+
+### Issue 5a: Docker build fails with spaCy model
+
+**Symptoms:**
+```
+ERROR: failed to build: failed to solve: process "/bin/sh -c python -m spacy download en_core_web_lg" did not complete successfully: exit code 1
+```
+
+**Solutions:**
+```bash
+# Use the Docker-specific setup script
+python docker_setup.py
+
+# Or manually build lightweight image
+docker build -f Dockerfile.light -t trustlayer-ai .
+
+# Or use docker-compose with runtime model download
+docker-compose up -d
+
+# Check container logs for model download progress
+docker logs trustlayer-proxy
+
+# If model download fails in container, exec into container
+docker exec -it trustlayer-proxy bash
+python -m spacy download en_core_web_sm
 ```
 
 ### Issue 6: Dashboard not loading
