@@ -13,9 +13,11 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trustlayer-network
 
   # TrustLayer AI Proxy
   proxy:
@@ -37,7 +39,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s
+    networks:
+      - trustlayer-network
 
   # Streamlit Dashboard
   dashboard:
@@ -56,11 +60,13 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    networks:
+      - trustlayer-network
 
 volumes:
   redis_data:
     driver: local
 
 networks:
-  default:
-    name: trustlayer-network
+  trustlayer-network:
+    driver: bridge

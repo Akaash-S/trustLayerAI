@@ -7,9 +7,11 @@ allowed_domains:
   - "api.anthropic.com"
   - "generativelanguage.googleapis.com"
   - "api.cohere.ai"
+  - "localhost:8000"
+  - "127.0.0.1:8000"
 
 redis:
-  host: "localhost"
+  host: "redis"  # Use service name for Docker networking
   port: 6379
   db: 0
   session_ttl: 3600  # 1 hour

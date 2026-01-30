@@ -163,12 +163,16 @@ async def proxy_request(request: Request, path: str, background_tasks: Backgroun
     """
     Catch-all route that dynamically routes requests based on Host header
     """
+    # Special handling for health check
+    if path == "health":
+        return {"status": "healthy", "service": "TrustLayer AI Proxy"}
+    
     # Extract target host from headers
     host = request.headers.get("host")
     if not host:
         raise HTTPException(status_code=400, detail="Host header required")
     
-    # Security check: validate allowed domains
+    # Security check: validate allowed domains (skip for health check)
     if not security.check_domain(host):
         logger.warning(f"Blocked request to unauthorized domain: {host}")
         raise HTTPException(status_code=403, detail=f"Domain {host} not allowed")

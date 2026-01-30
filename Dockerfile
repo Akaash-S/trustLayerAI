@@ -18,36 +18,48 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Download spaCy model during build with proper error handling
+RUN python -m spacy download en_core_web_sm || \
+    pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl || \
+    echo "Warning: spaCy model installation failed, will use basic PII detection"
+
 # Copy application code
 COPY . .
 
-# Create entrypoint script that handles spaCy model gracefully
+# Create entrypoint script
 RUN cat > /app/entrypoint.sh << 'EOF'
 #!/bin/bash
 set -e
 
 echo "🛡️ Starting TrustLayer AI..."
 
-# Function to check and download spaCy model
+# Function to check and setup spaCy model
 setup_spacy_model() {
     echo "📦 Checking spaCy model availability..."
     
-    # Check if large model exists
-    if python -c "import spacy; spacy.load('en_core_web_lg')" 2>/dev/null; then
-        echo "✅ Large spaCy model (en_core_web_lg) is available"
+    # Check if small model exists
+    if python -c "import spacy; spacy.load('en_core_web_sm')" 2>/dev/null; then
+        echo "✅ spaCy model (en_core_web_sm) is available"
         return 0
     fi
     
-    # Check if small model exists
-    if python -c "import spacy; spacy.load('en_core_web_sm')" 2>/dev/null; then
-        echo "✅ Small spaCy model (en_core_web_sm) is available"
+    # Check if large model exists
+    if python -c "import spacy; spacy.load('en_core_web_lg')" 2>/dev/null; then
+        echo "✅ spaCy model (en_core_web_lg) is available"
         return 0
     fi
     
     # Try to download small model
-    echo "📥 Attempting to download spaCy small model..."
+    echo "📥 Attempting to download spaCy model..."
     if python -m spacy download en_core_web_sm 2>/dev/null; then
         echo "✅ Successfully downloaded en_core_web_sm"
+        return 0
+    fi
+    
+    # Try alternative download method
+    echo "📥 Trying alternative download method..."
+    if pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl 2>/dev/null; then
+        echo "✅ Successfully installed model via direct download"
         return 0
     fi
     

@@ -18,16 +18,32 @@ class TelemetryCollector:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         
-        # Initialize Redis connection
+        # Initialize Redis connection with error handling
         redis_config = config["redis"]
-        self.redis_client = redis.Redis(
-            host=redis_config["host"],
-            port=redis_config["port"],
-            db=redis_config["db"],
-            decode_responses=True
-        )
-        
-        logger.info("Telemetry Collector initialized")
+        try:
+            self.redis_client = redis.Redis(
+                host=redis_config["host"],
+                port=redis_config["port"],
+                db=redis_config["db"],
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True
+            )
+            # Test connection
+            self.redis_client.ping()
+            logger.info(f"Telemetry Collector connected to Redis at {redis_config['host']}:{redis_config['port']}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            logger.warning("Telemetry will use in-memory storage (data will be lost on restart)")
+            self.redis_client = None
+            # Initialize in-memory storage
+            self.memory_storage = {
+                'requests': [],
+                'pii_events': [],
+                'counters': {},
+                'latencies': []
+            }
     
     async def log_request(self, host: str, path: str, method: str, latency: float, status_code: int):
         """
@@ -46,18 +62,32 @@ class TelemetryCollector:
                 'status_code': status_code
             }
             
-            # Add to requests list (keep last 1000 requests)
-            self.redis_client.lpush('requests', json.dumps(request_data))
-            self.redis_client.ltrim('requests', 0, 999)
-            
-            # Update counters
-            self.redis_client.incr('total_requests')
-            self.redis_client.incr(f'requests_by_host:{host}')
-            self.redis_client.incr(f'requests_by_status:{status_code}')
-            
-            # Update latency stats
-            self.redis_client.lpush('latencies', latency)
-            self.redis_client.ltrim('latencies', 0, 999)
+            if self.redis_client:
+                # Use Redis storage
+                self.redis_client.lpush('requests', json.dumps(request_data))
+                self.redis_client.ltrim('requests', 0, 999)
+                
+                # Update counters
+                self.redis_client.incr('total_requests')
+                self.redis_client.incr(f'requests_by_host:{host}')
+                self.redis_client.incr(f'requests_by_status:{status_code}')
+                
+                # Update latency stats
+                self.redis_client.lpush('latencies', latency)
+                self.redis_client.ltrim('latencies', 0, 999)
+            else:
+                # Use in-memory storage
+                self.memory_storage['requests'].insert(0, request_data)
+                self.memory_storage['requests'] = self.memory_storage['requests'][:1000]
+                
+                # Update counters
+                self.memory_storage['counters']['total_requests'] = self.memory_storage['counters'].get('total_requests', 0) + 1
+                self.memory_storage['counters'][f'requests_by_host:{host}'] = self.memory_storage['counters'].get(f'requests_by_host:{host}', 0) + 1
+                self.memory_storage['counters'][f'requests_by_status:{status_code}'] = self.memory_storage['counters'].get(f'requests_by_status:{status_code}', 0) + 1
+                
+                # Update latency stats
+                self.memory_storage['latencies'].insert(0, latency)
+                self.memory_storage['latencies'] = self.memory_storage['latencies'][:1000]
             
         except Exception as e:
             logger.error(f"Error logging request: {e}")
@@ -76,13 +106,22 @@ class TelemetryCollector:
                 'entities_redacted': entities_count
             }
             
-            # Add to PII events list
-            self.redis_client.lpush('pii_events', json.dumps(pii_data))
-            self.redis_client.ltrim('pii_events', 0, 999)
-            
-            # Update PII counters
-            self.redis_client.incr('total_pii_entities_blocked')
-            self.redis_client.incr(f'pii_events_by_session:{session_id}')
+            if self.redis_client:
+                # Use Redis storage
+                self.redis_client.lpush('pii_events', json.dumps(pii_data))
+                self.redis_client.ltrim('pii_events', 0, 999)
+                
+                # Update PII counters
+                self.redis_client.incr('total_pii_entities_blocked')
+                self.redis_client.incr(f'pii_events_by_session:{session_id}')
+            else:
+                # Use in-memory storage
+                self.memory_storage['pii_events'].insert(0, pii_data)
+                self.memory_storage['pii_events'] = self.memory_storage['pii_events'][:1000]
+                
+                # Update PII counters
+                self.memory_storage['counters']['total_pii_entities_blocked'] = self.memory_storage['counters'].get('total_pii_entities_blocked', 0) + entities_count
+                self.memory_storage['counters'][f'pii_events_by_session:{session_id}'] = self.memory_storage['counters'].get(f'pii_events_by_session:{session_id}', 0) + 1
             
         except Exception as e:
             logger.error(f"Error logging PII redaction: {e}")
@@ -92,68 +131,11 @@ class TelemetryCollector:
         Get comprehensive metrics for the dashboard
         """
         try:
-            # Basic counters
-            total_requests = int(self.redis_client.get('total_requests') or 0)
-            total_pii_blocked = int(self.redis_client.get('total_pii_entities_blocked') or 0)
-            
-            # Recent requests (last 100)
-            recent_requests_raw = self.redis_client.lrange('requests', 0, 99)
-            recent_requests = [json.loads(req) for req in recent_requests_raw]
-            
-            # Recent PII events
-            recent_pii_raw = self.redis_client.lrange('pii_events', 0, 99)
-            recent_pii_events = [json.loads(event) for event in recent_pii_raw]
-            
-            # Latency statistics
-            latencies_raw = self.redis_client.lrange('latencies', 0, 999)
-            latencies = [float(lat) for lat in latencies_raw]
-            
-            avg_latency = sum(latencies) / len(latencies) if latencies else 0
-            max_latency = max(latencies) if latencies else 0
-            min_latency = min(latencies) if latencies else 0
-            
-            # Requests by host
-            host_stats = {}
-            for key in self.redis_client.keys('requests_by_host:*'):
-                host = key.split(':', 1)[1]
-                count = int(self.redis_client.get(key) or 0)
-                host_stats[host] = count
-            
-            # Status code distribution
-            status_stats = {}
-            for key in self.redis_client.keys('requests_by_status:*'):
-                status = key.split(':', 1)[1]
-                count = int(self.redis_client.get(key) or 0)
-                status_stats[status] = count
-            
-            # Calculate compliance status (based on PII blocking effectiveness)
-            compliance_score = min(100, (total_pii_blocked / max(total_requests, 1)) * 100)
-            
-            return {
-                'summary': {
-                    'total_requests': total_requests,
-                    'total_pii_entities_blocked': total_pii_blocked,
-                    'compliance_score': round(compliance_score, 2),
-                    'avg_latency_ms': round(avg_latency * 1000, 2),
-                    'max_latency_ms': round(max_latency * 1000, 2),
-                    'min_latency_ms': round(min_latency * 1000, 2)
-                },
-                'traffic': {
-                    'by_host': host_stats,
-                    'by_status': status_stats,
-                    'recent_requests': recent_requests[:20]  # Last 20 requests
-                },
-                'security': {
-                    'recent_pii_events': recent_pii_events[:20],
-                    'pii_blocking_rate': round((total_pii_blocked / max(total_requests, 1)) * 100, 2)
-                },
-                'performance': {
-                    'latency_distribution': latencies[:100],  # Last 100 latencies
-                    'avg_latency': avg_latency,
-                    'latency_percentiles': self._calculate_percentiles(latencies)
-                }
-            }
-            
+            if self.redis_client:
+                return await self._get_redis_metrics()
+            else:
+                return await self._get_memory_metrics()
+                
         except Exception as e:
             logger.error(f"Error getting metrics: {e}")
             return {
@@ -165,6 +147,109 @@ class TelemetryCollector:
                     'avg_latency_ms': 0
                 }
             }
+    
+    async def _get_redis_metrics(self) -> Dict[str, Any]:
+        """Get metrics from Redis storage"""
+        # Basic counters
+        total_requests = int(self.redis_client.get('total_requests') or 0)
+        total_pii_blocked = int(self.redis_client.get('total_pii_entities_blocked') or 0)
+        
+        # Recent requests (last 100)
+        recent_requests_raw = self.redis_client.lrange('requests', 0, 99)
+        recent_requests = [json.loads(req) for req in recent_requests_raw]
+        
+        # Recent PII events
+        recent_pii_raw = self.redis_client.lrange('pii_events', 0, 99)
+        recent_pii_events = [json.loads(event) for event in recent_pii_raw]
+        
+        # Latency statistics
+        latencies_raw = self.redis_client.lrange('latencies', 0, 999)
+        latencies = [float(lat) for lat in latencies_raw]
+        
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+        max_latency = max(latencies) if latencies else 0
+        min_latency = min(latencies) if latencies else 0
+        
+        # Requests by host
+        host_stats = {}
+        for key in self.redis_client.keys('requests_by_host:*'):
+            host = key.split(':', 1)[1]
+            count = int(self.redis_client.get(key) or 0)
+            host_stats[host] = count
+        
+        # Status code distribution
+        status_stats = {}
+        for key in self.redis_client.keys('requests_by_status:*'):
+            status = key.split(':', 1)[1]
+            count = int(self.redis_client.get(key) or 0)
+            status_stats[status] = count
+        
+        return self._format_metrics(total_requests, total_pii_blocked, recent_requests, recent_pii_events, 
+                                  latencies, avg_latency, max_latency, min_latency, host_stats, status_stats)
+    
+    async def _get_memory_metrics(self) -> Dict[str, Any]:
+        """Get metrics from in-memory storage"""
+        # Basic counters
+        total_requests = self.memory_storage['counters'].get('total_requests', 0)
+        total_pii_blocked = self.memory_storage['counters'].get('total_pii_entities_blocked', 0)
+        
+        # Recent requests
+        recent_requests = self.memory_storage['requests'][:100]
+        
+        # Recent PII events
+        recent_pii_events = self.memory_storage['pii_events'][:100]
+        
+        # Latency statistics
+        latencies = self.memory_storage['latencies'][:1000]
+        
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+        max_latency = max(latencies) if latencies else 0
+        min_latency = min(latencies) if latencies else 0
+        
+        # Requests by host
+        host_stats = {}
+        status_stats = {}
+        for key, value in self.memory_storage['counters'].items():
+            if key.startswith('requests_by_host:'):
+                host = key.split(':', 1)[1]
+                host_stats[host] = value
+            elif key.startswith('requests_by_status:'):
+                status = key.split(':', 1)[1]
+                status_stats[status] = value
+        
+        return self._format_metrics(total_requests, total_pii_blocked, recent_requests, recent_pii_events, 
+                                  latencies, avg_latency, max_latency, min_latency, host_stats, status_stats)
+    
+    def _format_metrics(self, total_requests, total_pii_blocked, recent_requests, recent_pii_events, 
+                       latencies, avg_latency, max_latency, min_latency, host_stats, status_stats):
+        """Format metrics into standard structure"""
+        # Calculate compliance status (based on PII blocking effectiveness)
+        compliance_score = min(100, (total_pii_blocked / max(total_requests, 1)) * 100)
+        
+        return {
+            'summary': {
+                'total_requests': total_requests,
+                'total_pii_entities_blocked': total_pii_blocked,
+                'compliance_score': round(compliance_score, 2),
+                'avg_latency_ms': round(avg_latency * 1000, 2),
+                'max_latency_ms': round(max_latency * 1000, 2),
+                'min_latency_ms': round(min_latency * 1000, 2)
+            },
+            'traffic': {
+                'by_host': host_stats,
+                'by_status': status_stats,
+                'recent_requests': recent_requests[:20]  # Last 20 requests
+            },
+            'security': {
+                'recent_pii_events': recent_pii_events[:20],
+                'pii_blocking_rate': round((total_pii_blocked / max(total_requests, 1)) * 100, 2)
+            },
+            'performance': {
+                'latency_distribution': latencies[:100],  # Last 100 latencies
+                'avg_latency': avg_latency,
+                'latency_percentiles': self._calculate_percentiles(latencies)
+            }
+        }
     
     def _calculate_percentiles(self, values: List[float]) -> Dict[str, float]:
         """
