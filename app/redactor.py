@@ -76,12 +76,25 @@ class PII_Redactor:
         
         # Initialize Redis connection
         redis_config = config["redis"]
-        self.redis_client = redis.Redis(
-            host=redis_config["host"],
-            port=redis_config["port"],
-            db=redis_config["db"],
-            decode_responses=True
-        )
+        try:
+            self.redis_client = redis.Redis(
+                host=redis_config["host"],
+                port=redis_config["port"],
+                db=redis_config["db"],
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True
+            )
+            # Test connection
+            self.redis_client.ping()
+            logger.info(f"PII Redactor connected to Redis at {redis_config['host']}:{redis_config['port']}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            logger.warning("PII Redactor will use in-memory storage")
+            self.redis_client = None
+            self.memory_mappings = {}
+        
         self.session_ttl = redis_config["session_ttl"]
         
         # Test spaCy model availability
@@ -119,18 +132,40 @@ class PII_Redactor:
     
     def _generate_placeholder(self, entity_type: str, entity_value: str, session_id: str) -> str:
         """Generate a unique placeholder for the detected entity"""
-        # Get existing count for this entity type in this session
-        count_key = f"session:{session_id}:count:{entity_type}"
-        count = self.redis_client.incr(count_key)
-        self.redis_client.expire(count_key, self.session_ttl)
-        
-        placeholder = f"[CONFIDENTIAL_{entity_type}_{count}]"
-        
-        # Store the mapping
-        mapping_key = f"session:{session_id}:mapping:{placeholder}"
-        self.redis_client.setex(mapping_key, self.session_ttl, entity_value)
-        
-        return placeholder
+        try:
+            if self.redis_client:
+                # Get existing count for this entity type in this session
+                count_key = f"session:{session_id}:count:{entity_type}"
+                count = self.redis_client.incr(count_key)
+                self.redis_client.expire(count_key, self.session_ttl)
+                
+                placeholder = f"[CONFIDENTIAL_{entity_type}_{count}]"
+                
+                # Store the mapping
+                mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                self.redis_client.setex(mapping_key, self.session_ttl, entity_value)
+            else:
+                # Use in-memory storage
+                if not hasattr(self, 'memory_mappings'):
+                    self.memory_mappings = {}
+                
+                # Generate count
+                count_key = f"session:{session_id}:count:{entity_type}"
+                count = self.memory_mappings.get(count_key, 0) + 1
+                self.memory_mappings[count_key] = count
+                
+                placeholder = f"[CONFIDENTIAL_{entity_type}_{count}]"
+                
+                # Store the mapping
+                mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                self.memory_mappings[mapping_key] = entity_value
+            
+            return placeholder
+            
+        except Exception as e:
+            logger.error(f"Error generating placeholder: {e}")
+            # Fallback to simple placeholder
+            return f"[CONFIDENTIAL_{entity_type}_1]"
     
     async def redact_text(self, text: str, session_id: str) -> Tuple[str, Dict[str, str]]:
         """
@@ -140,12 +175,16 @@ class PII_Redactor:
             return text, {}
         
         try:
-            # Analyze text for PII entities
-            analyzer_results = self.analyzer.analyze(
-                text=text,
-                entities=self.entities,
-                language='en'
-            )
+            if self.use_presidio:
+                # Use Presidio analyzer
+                analyzer_results = self.analyzer.analyze(
+                    text=text,
+                    entities=self.entities,
+                    language='en'
+                )
+            else:
+                # Use basic regex analyzer
+                analyzer_results = self.analyzer.analyze(text, self.entities, 'en')
             
             if not analyzer_results:
                 return text, {}
@@ -179,6 +218,7 @@ class PII_Redactor:
             
         except Exception as e:
             logger.error(f"Error during PII redaction: {e}")
+            # Return original text if redaction fails
             return text, {}
     
     async def restore_pii(self, response_data: Any, mapping: Dict[str, str], session_id: str) -> Any:
@@ -192,13 +232,23 @@ class PII_Redactor:
             # Convert response to string for processing
             response_str = json.dumps(response_data) if not isinstance(response_data, str) else response_data
             
-            # Get all mappings for this session from Redis
+            # Get all mappings for this session
             session_mappings = {}
             for placeholder in mapping.keys():
-                mapping_key = f"session:{session_id}:mapping:{placeholder}"
-                original_value = self.redis_client.get(mapping_key)
-                if original_value:
-                    session_mappings[placeholder] = original_value
+                try:
+                    if self.redis_client:
+                        mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                        original_value = self.redis_client.get(mapping_key)
+                        if original_value:
+                            session_mappings[placeholder] = original_value
+                    else:
+                        # Use in-memory storage
+                        mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                        original_value = self.memory_mappings.get(mapping_key)
+                        if original_value:
+                            session_mappings[placeholder] = original_value
+                except Exception as e:
+                    logger.error(f"Error retrieving mapping for {placeholder}: {e}")
             
             # Replace placeholders with original values
             restored_text = response_str
@@ -225,12 +275,22 @@ class PII_Redactor:
         try:
             restored_text = text
             
-            # Get all mappings for this session from Redis
+            # Get all mappings for this session
             for placeholder in mapping.keys():
-                mapping_key = f"session:{session_id}:mapping:{placeholder}"
-                original_value = self.redis_client.get(mapping_key)
-                if original_value:
-                    restored_text = restored_text.replace(placeholder, original_value)
+                try:
+                    if self.redis_client:
+                        mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                        original_value = self.redis_client.get(mapping_key)
+                        if original_value:
+                            restored_text = restored_text.replace(placeholder, original_value)
+                    else:
+                        # Use in-memory storage
+                        mapping_key = f"session:{session_id}:mapping:{placeholder}"
+                        original_value = self.memory_mappings.get(mapping_key)
+                        if original_value:
+                            restored_text = restored_text.replace(placeholder, original_value)
+                except Exception as e:
+                    logger.error(f"Error retrieving mapping for {placeholder}: {e}")
             
             return restored_text
             

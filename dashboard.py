@@ -50,11 +50,18 @@ st.markdown("""
 def get_metrics():
     """Fetch metrics from the proxy API"""
     try:
-        response = requests.get(f"http://localhost:{config['proxy']['port']}/metrics", timeout=5)
+        response = requests.get(f"http://localhost:{config['proxy']['port']}/metrics", timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
+            st.error(f"Failed to fetch metrics: HTTP {response.status_code}")
             return None
+    except requests.exceptions.ConnectionError:
+        st.error("Unable to connect to TrustLayer AI Proxy. Please ensure the service is running on http://localhost:8000")
+        return None
+    except requests.exceptions.Timeout:
+        st.error("Connection to TrustLayer AI Proxy timed out. Please check if the service is responding.")
+        return None
     except Exception as e:
         st.error(f"Failed to fetch metrics: {e}")
         return None
@@ -78,14 +85,54 @@ def main():
     else:
         render_dashboard()
 
+def test_proxy_connection():
+    """Test connection to the proxy"""
+    try:
+        response = requests.get(f"http://localhost:{config['proxy']['port']}/health", timeout=5)
+        if response.status_code == 200:
+            return True, "Connected"
+        else:
+            return False, f"HTTP {response.status_code}"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection refused"
+    except requests.exceptions.Timeout:
+        return False, "Timeout"
+    except Exception as e:
+        return False, str(e)
+
 def render_dashboard():
     """Render the main dashboard"""
+    
+    # Test connection first
+    connected, status = test_proxy_connection()
+    
+    if not connected:
+        st.error(f"❌ Cannot connect to TrustLayer AI Proxy: {status}")
+        st.info("🔧 Troubleshooting:")
+        st.code("""
+# Make sure the proxy is running:
+python run_all.py
+
+# Or start manually:
+venv\\Scripts\\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+        """)
+        
+        # Show retry button
+        if st.button("🔄 Retry Connection"):
+            st.experimental_rerun()
+        
+        return
+    
+    # Show connection status
+    st.success(f"✅ Connected to TrustLayer AI Proxy")
     
     # Fetch current metrics
     metrics = get_metrics()
     
     if not metrics:
-        st.error("Unable to connect to TrustLayer AI Proxy. Please ensure the service is running.")
+        st.warning("⚠️ Could not fetch metrics from proxy")
         return
     
     # Summary metrics
