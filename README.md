@@ -148,10 +148,17 @@ If issues occur, check:
 - Redis container status: `docker ps`
 - Port availability: `netstat -ano | findstr :8000`
 
-## AWS VPC Deployment
+## Cloud Deployment Options
 
+**🎯 [Deployment Comparison Guide](DEPLOYMENT_COMPARISON.md)** - Choose the best option for your needs
+
+### Google Cloud Platform (Recommended)
+- **[Compute Engine Deployment](GCP_COMPUTE_ENGINE_DEPLOYMENT.md)** - Simple VM-based deployment (~$50/month) ⭐ **Recommended**
+- **[GKE Deployment](GCP_MANUAL_GKE_DEPLOYMENT_GUIDE.md)** - Kubernetes-based deployment (~$150/month)
+
+### AWS VPC Deployment
 1. Set up Route 53 private hosted zone
-2. Configure Client VPN endpoint
+2. Configure Client VPN endpoint  
 3. Deploy proxy in private subnet
 4. Update DNS records to route AI traffic through proxy
 

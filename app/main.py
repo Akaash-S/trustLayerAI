@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import httpx
 import yaml
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .redactor import PII_Redactor
@@ -67,6 +67,24 @@ class SecurityGuardrails:
         return False
 
 security = SecurityGuardrails(config)
+
+@app.middleware("http")
+async def force_https_redirect(request: Request, call_next):
+    """Handle SSL termination from load balancer"""
+    # Check if request came through HTTP but should be HTTPS
+    if request.headers.get("x-forwarded-proto") == "http" and not request.url.hostname in ["localhost", "127.0.0.1"]:
+        url = str(request.url).replace("http://", "https://", 1)
+        return RedirectResponse(url=url, status_code=301)
+    
+    response = await call_next(request)
+    
+    # Add security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    return response
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -252,7 +270,7 @@ async def proxy_request(request: Request, path: str, background_tasks: Backgroun
     try:
         async with httpx.AsyncClient(
             timeout=30.0,
-            verify=False,  # Disable SSL verification for development
+            verify=True,  # Enable SSL verification for production
             follow_redirects=True
         ) as client:
             # Forward the request
