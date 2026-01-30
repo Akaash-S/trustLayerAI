@@ -1,0 +1,69 @@
+# TrustLayer AI - Cloud Run Deployment (Quota-Friendly Alternative)
+# Use this if you hit GKE quota limits
+
+# Deploy proxy service
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: trustlayer-proxy
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "2"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 100
+      containers:
+      - image: gcr.io/PROJECT_ID/trustlayer-ai:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: REDIS_HOST
+          value: "10.0.3.2"  # Update with your Redis IP
+        - name: REDIS_PORT
+          value: "6379"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "0.5"
+            memory: "512Mi"
+---
+# Deploy dashboard service
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: trustlayer-dashboard
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containerConcurrency: 10
+      containers:
+      - image: gcr.io/PROJECT_ID/trustlayer-ai-dashboard:latest
+        ports:
+        - containerPort: 8501
+        env:
+        - name: PYTHONPATH
+          value: "/app"
+        - name: STREAMLIT_SERVER_ADDRESS
+          value: "0.0.0.0"
+        - name: STREAMLIT_SERVER_PORT
+          value: "8501"
+        resources:
+          limits:
+            cpu: "0.5"
+            memory: "512Mi"
+          requests:
+            cpu: "0.25"
+            memory: "256Mi"

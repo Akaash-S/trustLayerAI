@@ -1,0 +1,47 @@
+proxy:
+  host: "0.0.0.0"
+  port: 8000
+  
+allowed_domains:
+  - "api.openai.com"
+  - "api.anthropic.com"
+  - "generativelanguage.googleapis.com"
+  - "api.cohere.ai"
+  - "localhost:8000"
+  - "127.0.0.1:8000"
+
+redis:
+  host: "localhost"  # Use localhost for local development
+  port: 6379
+  db: 0
+  session_ttl: 3600  # 1 hour
+
+presidio:
+  entities:
+    - "PERSON"
+    - "EMAIL_ADDRESS"
+    - "PHONE_NUMBER"
+    - "CREDIT_CARD"
+    - "IBAN_CODE"
+    - "IP_ADDRESS"
+    - "LOCATION"
+    - "ORGANIZATION"
+    - "DATE_TIME"
+    - "MEDICAL_LICENSE"
+    - "US_SSN"
+    - "IN_PAN"
+    - "IN_AADHAAR"
+
+security:
+  prompt_injection_patterns:
+    - "ignore previous instructions"
+    - "forget everything"
+    - "act as"
+    - "pretend to be"
+    - "roleplay"
+    - "system prompt"
+    - "override"
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8501
