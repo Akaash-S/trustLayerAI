@@ -56,62 +56,52 @@ A Production-Ready AI Governance Transparent Proxy that intercepts all outbound 
 - Seamless user experience
 - Complete security invisibility
 
-## 🧪 Local Testing & Validation
+## 🚀 One-Command Setup & Test
 
-### Quick Start Testing
+### Fully Automated (Recommended)
 
-1. **Automated Setup:**
-   ```bash
-   # Run complete setup
-   python setup_simple.py
-   ```
-
-2. **Start Services:**
-   ```bash
-   # Windows
-   start_local.bat
-   # OR PowerShell
-   start_local.ps1
-   ```
-
-3. **Run Validation:**
-   ```bash
-   # Activate environment
-   venv\Scripts\activate
-   
-   # Complete system validation
-   python validate_setup.py
-   ```
-
-### Manual Testing Steps
-
-**Terminal 1 - Proxy:**
 ```bash
-venv\Scripts\activate
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Windows: Double-click or run
+run_all.bat
+
+# Or use Python directly
+python run_all.py
 ```
 
-**Terminal 2 - Dashboard:**
+This single command will:
+1. ✅ Check prerequisites (Python, Docker)
+2. ✅ Set up virtual environment
+3. ✅ Install all dependencies
+4. ✅ Start Redis, Proxy, and Dashboard
+5. ✅ Run comprehensive tests
+6. ✅ Keep services running for manual testing
+
+### Manual Testing (Advanced Users)
+
+**Step 1: Setup**
 ```bash
-venv\Scripts\activate
-streamlit run dashboard.py
+python setup_simple.py
 ```
 
-**Terminal 3 - Tests:**
+**Step 2: Automated Testing**
 ```bash
+# Activate environment
 venv\Scripts\activate
 
-# Basic connectivity tests
+# Run automated test suite
+python auto_test.py
+```
+
+**Step 3: Manual Testing**
+```bash
+# Basic connectivity
 python test_basic.py
 
-# PII redaction tests
+# PII redaction tests  
 python test_pii.py
 
 # File upload tests
 python test_file_upload.py
-
-# Complete validation
-python validate_setup.py
 ```
 
 ### Expected Results
