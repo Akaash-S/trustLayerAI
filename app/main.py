@@ -158,21 +158,27 @@ async def extract_and_redact_content(request: Request) -> tuple[str, Dict[str, s
     
     return "", {}
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "TrustLayer AI Proxy"}
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get telemetry metrics"""
+    return await telemetry.get_metrics()
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy_request(request: Request, path: str, background_tasks: BackgroundTasks):
     """
     Catch-all route that dynamically routes requests based on Host header
     """
-    # Special handling for health check
-    if path == "health":
-        return {"status": "healthy", "service": "TrustLayer AI Proxy"}
-    
     # Extract target host from headers
     host = request.headers.get("host")
     if not host:
         raise HTTPException(status_code=400, detail="Host header required")
     
-    # Security check: validate allowed domains (skip for health check)
+    # Security check: validate allowed domains
     if not security.check_domain(host):
         logger.warning(f"Blocked request to unauthorized domain: {host}")
         raise HTTPException(status_code=403, detail=f"Domain {host} not allowed")
@@ -237,16 +243,6 @@ async def proxy_request(request: Request, path: str, background_tasks: Backgroun
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal proxy error")
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "TrustLayer AI Proxy"}
-
-@app.get("/metrics")
-async def get_metrics():
-    """Get telemetry metrics"""
-    return await telemetry.get_metrics()
 
 if __name__ == "__main__":
     import uvicorn
