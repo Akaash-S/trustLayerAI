@@ -445,16 +445,70 @@ services:
 
 10. **Build and start the services**:
 
-    **Option A: Simple approach (Recommended if you get exec format errors)**
+    **RECOMMENDED: Use the simple approach to avoid permission issues**
     ```bash
-    # Use the simplified docker-compose without custom entrypoint
+    # Create simplified docker-compose file
+    cat > docker-compose.simple.yml << 'EOF'
+version: '3.8'
+
+services:
+  # TrustLayer AI Proxy
+  proxy:
+    build: .
+    container_name: trustlayer-proxy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # Streamlit Dashboard
+  dashboard:
+    build: .
+    container_name: trustlayer-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./dashboard.py:/app/dashboard.py:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - proxy
+    restart: unless-stopped
+    command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: trustlayer-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - proxy
+      - dashboard
+    restart: unless-stopped
+EOF
+
+    # Build and start services
     docker-compose -f docker-compose.simple.yml build
     docker-compose -f docker-compose.simple.yml up -d
     ```
 
-    **Option B: Full production setup**
+    **Alternative: If you prefer the production setup with custom entrypoint**
     ```bash
-    docker-compose -f docker-compose.prod.yml build
+    # Fix permissions first
+    chmod +x entrypoint.sh
+    
+    # Then build and start
+    docker-compose -f docker-compose.prod.yml build --no-cache
     docker-compose -f docker-compose.prod.yml up -d
     ```
 
@@ -1129,9 +1183,12 @@ EOF
 chmod +x entrypoint.sh
 ```
 
-**Solution 3: Use simplified docker-compose (without entrypoint)**
+**Solution 3: Use simplified docker-compose (without entrypoint) - RECOMMENDED**
 ```bash
-# Create a simplified version without custom entrypoint
+# Stop any running containers
+docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+
+# Use the simplified version that avoids entrypoint issues entirely
 cat > docker-compose.simple.yml << 'EOF'
 version: '3.8'
 
@@ -1166,10 +1223,34 @@ services:
       - proxy
     restart: unless-stopped
     command: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: trustlayer-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - proxy
+      - dashboard
+    restart: unless-stopped
 EOF
 
-# Use the simplified version
+# Build and start with the simplified version
+docker-compose -f docker-compose.simple.yml build --no-cache
 docker-compose -f docker-compose.simple.yml up -d
+```
+
+**Solution 4: Fix entrypoint permissions (if you want to use the original)**
+```bash
+# Fix the entrypoint.sh permissions
+chmod +x entrypoint.sh
+
+# Rebuild without cache
+docker-compose -f docker-compose.prod.yml build --no-cache
+docker-compose -f docker-compose.prod.yml up -d
 ```
 
 ### **Common Issues:**
