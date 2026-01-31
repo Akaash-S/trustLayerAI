@@ -60,26 +60,93 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Fix for reverse proxy static file serving
+if 'trustlayer.asolvitra.tech' in st.get_option('server.baseUrlPath') or True:
+    # Configure Streamlit for reverse proxy
+    st.markdown("""
+    <script>
+    // Fix static file paths for reverse proxy
+    window.addEventListener('DOMContentLoaded', function() {
+        // Update all relative URLs to work with reverse proxy
+        const links = document.querySelectorAll('link[href^="./static/"]');
+        links.forEach(link => {
+            link.href = link.href.replace('./static/', '/static/');
+        });
+        
+        const scripts = document.querySelectorAll('script[src^="./static/"]');
+        scripts.forEach(script => {
+            script.src = script.src.replace('./static/', '/static/');
+        });
+    });
+    </script>
+    """, unsafe_allow_html=True)
+
+# Custom CSS - Enhanced for reverse proxy compatibility
 st.markdown("""
 <style>
+    /* Fix font loading issues */
+    @font-face {
+        font-family: 'Source Sans Pro';
+        src: url('/static/media/SourceSansPro-Regular.0d69e5ff5e92ac64a0c9.woff2') format('woff2');
+        font-display: swap;
+    }
+    
+    @font-face {
+        font-family: 'Source Serif Pro';
+        src: url('/static/media/SourceSerifPro-SemiBold.5c1d378dd5990ef334ca.woff2') format('woff2');
+        font-display: swap;
+    }
+    
+    /* Fallback fonts if custom fonts fail */
+    .main, .sidebar .sidebar-content {
+        font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
+    }
+    
     .metric-card {
         background-color: #f0f2f6;
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #1f77b4;
+        margin-bottom: 1rem;
     }
     .security-card {
         background-color: #f0f8f0;
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #2ca02c;
+        margin-bottom: 1rem;
     }
     .alert-card {
         background-color: #fff5f5;
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #d62728;
+        margin-bottom: 1rem;
+    }
+    
+    /* Hide Streamlit branding and menu */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Custom styling for better appearance */
+    .stMetric {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* Fix any broken images or icons */
+    img[src*="static"] {
+        display: none;
+    }
+    
+    /* Loading fallback */
+    .stSpinner {
+        text-align: center;
+        padding: 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
